@@ -166,7 +166,7 @@ class CartPole:
 
 
 
-def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle=True):
+def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle=False):
     """
     
     Parameters
@@ -227,7 +227,7 @@ def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle
     if len(x_history) != 4: return x_history[-1]
     else: return x_history
 
-def generate_data(n, steps=1):
+def generate_data(n, steps=1, remap_angle=False):
     for i in range(n):
         try:
             x_ = np.array([np.random.normal(), np.random.uniform(-10, 10), np.random.uniform(-np.pi,np.pi), np.random.uniform(-15,15)])
@@ -266,7 +266,7 @@ def plot_y_contour_as_difference_in_x(initial_x, index_pair, range_x_pair, index
             x[index_1] = value_1
             x[index_2] = value_2
             x_0_grid[i,j] = x
-            if dynamics == 'actual': x_t_grid[i,j] = np.array(move_cart(x, steps=1, display_plots=False, remap_angle=True))
+            if dynamics == 'actual': x_t_grid[i,j] = np.array(move_cart(x, steps=1, display_plots=False, remap_angle=False))
             elif dynamics == 'predicted':
                 assert model, 'no model given'
                 x_t_grid[i,j] = model(x, kwargs['alpha'], kwargs['X_i_vals'], kwargs['sigma']) # TODO make this model.predict()
@@ -330,7 +330,7 @@ def plot_prediction_vs_actual_over_time(prediction_history, y_history, title=Non
     if title: fig.suptitle(title)
     fig.tight_layout()
     
-def project_x_using_model(initial_x, model, steps, remap_angle=True, **kwargs):
+def project_x_using_model(initial_x, model, steps, remap_angle=False, compound_predictions=False, **kwargs):
     
     cp = CartPole()
     cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity = initial_x
@@ -341,7 +341,11 @@ def project_x_using_model(initial_x, model, steps, remap_angle=True, **kwargs):
         cp.performAction()
         if remap_angle: cp.remap_angle()
         y_ = np.array([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity])
-        if pred_ is not None: pred_ = pred_ + model(pred_, kwargs['alpha'], kwargs['X_i_vals'], kwargs['sigma']) #TODO change to model.predict
+        if pred_ is not None: 
+            if compound_predictions:
+                pred_ = pred_ + model(pred_, kwargs['alpha'], kwargs['X_i_vals'], kwargs['sigma']) #TODO change to model.predict
+            else:
+                pred_ = x_ + model(x_, kwargs['alpha'], kwargs['X_i_vals'], kwargs['sigma']) #TODO change to model.predict
           
         try:
             prediction_history = np.vstack((prediction_history, pred_))
@@ -352,3 +356,61 @@ def project_x_using_model(initial_x, model, steps, remap_angle=True, **kwargs):
             prediction_history = np.vstack((x_, pred_))
             y_history = np.vstack((x_, y_))
     return prediction_history, y_history
+
+
+def plot_y_scans(initial_x, index_to_variable, x_range_for_index, model=None, remap_angle=False, **kwargs):
+    '''
+    function for plotting y values when y is modelled 
+    as X(T) - X(0)
+    
+    Parameters
+    ----------
+    model : 
+        linear regression model
+    '''
+    
+    fig, axs = plt.subplots(2, 2, figsize=(12, 9))
+
+    for index in range(4):
+        
+        range_x = x_range_for_index[index]
+        
+        x = initial_x.copy()
+        y_results = []
+        x_0 = None
+        x_t = None
+
+        for i in range_x:
+            x[index] = i
+            x_t = np.array(move_cart(x, steps=1, display_plots=False, remap_angle=remap_angle))
+            try:
+                x_t_results = np.vstack((x_t_results, x_t))
+                x_0 = np.vstack((x_0, x))
+            except:
+                x_t_results = x_t
+                x_0 = x.copy()
+
+        if model: 
+            try: 
+                predictions = model(x_0, kwargs['alpha'], kwargs['X_i_vals'], kwargs['sigma']) # TODO change to model.predict
+            except:
+                predictions = model.predict(x_0) #linear model
+
+        y_results = x_t_results - x_0
+        if remap_angle: y_results[:,2] = np.array([_remap_angle(theta) for theta in y_results[:,2]])
+        
+        axs[int(round((index+1)/4,0)),index%2].plot(range_x, [y[0] for y in y_results], 'C0-', label='c_l')
+        axs[int(round((index+1)/4,0)),index%2].plot(range_x, [y[1] for y in y_results], 'C1-', label='c_v')
+        axs[int(round((index+1)/4,0)),index%2].plot(range_x, [y[2] for y in y_results], 'C2-', label='p_a')
+        axs[int(round((index+1)/4,0)),index%2].plot(range_x, [y[3] for y in y_results], 'C3-', label='p_v')
+        if model:
+            axs[int(round((index+1)/4,0)),index%2].plot(range_x, [pred_[0] for pred_ in predictions], 'C0--', label='c_l_pred')
+            axs[int(round((index+1)/4,0)),index%2].plot(range_x, [pred_[1] for pred_ in predictions], 'C1--', label='c_v_pred')
+            axs[int(round((index+1)/4,0)),index%2].plot(range_x, [pred_[2] for pred_ in predictions], 'C2--', label='p_a_pred')
+            axs[int(round((index+1)/4,0)),index%2].plot(range_x, [pred_[3] for pred_ in predictions], 'C3--', label='p_v_pred')
+        axs[int(round((index+1)/4,0)),index%2].set_ylabel('component of y values')
+        axs[int(round((index+1)/4,0)),index%2].set_xlabel('{} initial values'.format(index_to_variable[index]))
+        axs[int(round((index+1)/4,0)),index%2].legend()
+
+    fig.suptitle('varying over {}'.format(index_to_variable[index]))
+    fig.tight_layout()
