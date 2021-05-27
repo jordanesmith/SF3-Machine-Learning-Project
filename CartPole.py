@@ -306,7 +306,7 @@ def range_x_pair_finder(index_pair, x_range_for_index):
     range_x_pair = []
     for index in index_pair:
         range_x_pair.append(x_range_for_index[index])
-    return range_x_pair
+    return np.array(range_x_pair)
 
 def project_x_using_model(initial_x, model, steps, remap_angle=False, compound_predictions=False, **kwargs):
     
