@@ -172,7 +172,7 @@ def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle
     Parameters
     ----------
     initial_x : list-like
-        [cart_location, cart_velocity, pole_angle, pole_velocity]
+        [cart_location, cart_velocity, pole_angle, pole_velocity, action]
     steps: int
         number of steps taken
     visual: bool
@@ -190,16 +190,16 @@ def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle
     assert steps != 4, "Sorry, I don't like 4 steps"
     
     cp = CartPole(visual=visual)
-    cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity = initial_x
+    cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action = initial_x
     
     for step in range(steps):
         if visual: cp.drawPlot()
-        cp.performAction()
+        cp.performAction(action=action)
         if remap_angle: cp.remap_angle()
         try: 
-            x_history = np.vstack((x_history, np.array([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity])))
+            x_history = np.vstack((x_history, np.array([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action])))
         except:
-            x_history = np.array((initial_x, [cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity]))
+            x_history = np.array((initial_x, [cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action]))
         
     t = range(x_history.shape[0]) if steps > 1 else 1
     
@@ -220,23 +220,24 @@ def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle
         axs[2].set_xlabel('pole_angle')
         axs[2].set_ylabel('pole_velocity')
         
+        fig.suptitle('action: {}'.format(action))
         fig.tight_layout()
     
     elif display_plots and steps == 1: print("You're trying to plot over {} steps, which is not plottable, pick a number greater than 1".format(steps))
         
-    if len(x_history) != 4: return x_history[-1]
+    if len(x_history) != 5: return x_history[-1]
     else: return x_history
 
 def generate_data(n, steps=1, remap_angle=False):
     for i in range(n):
         try:
-            x_ = np.array([np.random.normal(), np.random.uniform(-10, 10), np.random.uniform(-np.pi,np.pi), np.random.uniform(-15,15)])
+            x_ = np.array([np.random.normal(), np.random.uniform(-10, 10), np.random.uniform(-np.pi,np.pi), np.random.uniform(-15,15), np.random.uniform(-20,20)])
             y_ = np.array(move_cart(x_, steps=steps, display_plots=False, remap_angle=remap_angle)) - x_
             x = np.vstack((x, x_))
             y = np.vstack((y, y_))
 
         except:
-            x = np.array([np.random.normal(), np.random.uniform(-10, 10), np.random.uniform(-np.pi,np.pi), np.random.uniform(-15,15)])
+            x = np.array([np.random.normal(), np.random.uniform(-10, 10), np.random.uniform(-np.pi,np.pi), np.random.uniform(-15,15), np.random.uniform(-20,20)])
             y = np.array(move_cart(x, steps=steps, display_plots=False, remap_angle=remap_angle)) - x
             
     return x,y
@@ -257,8 +258,8 @@ def plot_y_contour_as_difference_in_x(initial_x, index_pair, range_x_pair, index
     index_1, index_2 = index_pair
     range_1, range_2 = range_x_pair
     
-    x_0_grid = np.zeros((len(range_1),len(range_2),4))
-    x_t_grid = np.zeros((len(range_1),len(range_2),4))
+    x_0_grid = np.zeros((len(range_1),len(range_2),5))
+    x_t_grid = np.zeros((len(range_1),len(range_2),5))
     
     for i,value_1 in enumerate(range_1):
         for j, value_2 in enumerate(range_2):
@@ -297,6 +298,8 @@ def plot_y_contour_as_difference_in_x(initial_x, index_pair, range_x_pair, index
     axs[1,1].set_title('pole_velocity')
     axs[1,1].set_xlabel('{} initial value'.format(index_to_variable[index_1]))
     axs[1,1].set_ylabel('{} initial value'.format(index_to_variable[index_2]))
+    
+    if 4 not in index_pair: fig.suptitle('action: {}'.format(initial_x[-1]))
     fig.tight_layout()
 
 def range_x_pair_finder(index_pair, x_range_for_index):
@@ -304,6 +307,35 @@ def range_x_pair_finder(index_pair, x_range_for_index):
     for index in index_pair:
         range_x_pair.append(x_range_for_index[index])
     return range_x_pair
+
+def project_x_using_model(initial_x, model, steps, remap_angle=False, compound_predictions=False, **kwargs):
+    
+    cp = CartPole()
+    cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action = initial_x
+    pred_ = None
+    
+    for step in range(steps):
+        x_ = np.array([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action])
+        cp.performAction(action)
+        if remap_angle: cp.remap_angle()
+        y_ = np.array([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action])
+        if pred_ is not None: 
+            if compound_predictions:
+                pred_ = pred_ + model(pred_, kwargs['alpha'], kwargs['X_i_vals'], kwargs['sigma']) #TODO change to model.predict
+            else:
+                pred_ = x_ + model(x_, kwargs['alpha'], kwargs['X_i_vals'], kwargs['sigma']) #TODO change to model.predict
+          
+        try:
+            prediction_history = np.vstack((prediction_history, pred_))
+            y_history = np.vstack((y_history, y_))
+        except:
+            assert all(x_) == all(initial_x), '{}_______{}'.format(x_, initial_x)
+            pred_ = x_ + model(x_, kwargs['alpha'], kwargs['X_i_vals'], kwargs['sigma'])
+            prediction_history = np.vstack((x_, pred_))
+            y_history = np.vstack((x_, y_))
+        print('action in project_x_using_model step {} was {}'.format(step, action))
+    
+    return prediction_history, y_history
 
 def plot_prediction_vs_actual_over_time(prediction_history, y_history, title=None):
     
@@ -327,35 +359,12 @@ def plot_prediction_vs_actual_over_time(prediction_history, y_history, title=Non
     axs[1,1].set_ylabel('Y_pole_velocity')
     axs[1,1].set_xlabel('time_step')
     axs[0,1].legend(loc='upper right')
-    if title: fig.suptitle(title)
+    if title: descriptive_title = title
+    else: descriptive_title = ''
+
+    fig.suptitle(descriptive_title + ' action: {}'.format(y_history[0][-1]))
     fig.tight_layout()
     
-def project_x_using_model(initial_x, model, steps, remap_angle=False, compound_predictions=False, **kwargs):
-    
-    cp = CartPole()
-    cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity = initial_x
-    pred_ = None
-    
-    for _ in range(steps):
-        x_ = np.array([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity])
-        cp.performAction()
-        if remap_angle: cp.remap_angle()
-        y_ = np.array([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity])
-        if pred_ is not None: 
-            if compound_predictions:
-                pred_ = pred_ + model(pred_, kwargs['alpha'], kwargs['X_i_vals'], kwargs['sigma']) #TODO change to model.predict
-            else:
-                pred_ = x_ + model(x_, kwargs['alpha'], kwargs['X_i_vals'], kwargs['sigma']) #TODO change to model.predict
-          
-        try:
-            prediction_history = np.vstack((prediction_history, pred_))
-            y_history = np.vstack((y_history, y_))
-        except:
-            assert all(x_) == all(initial_x), '{}_______{}'.format(x_, initial_x)
-            pred_ = x_ + model(x_, kwargs['alpha'], kwargs['X_i_vals'], kwargs['sigma'])
-            prediction_history = np.vstack((x_, pred_))
-            y_history = np.vstack((x_, y_))
-    return prediction_history, y_history
 
 
 def plot_y_scans(initial_x, index_to_variable, x_range_for_index, model=None, remap_angle=False, **kwargs):
@@ -412,5 +421,5 @@ def plot_y_scans(initial_x, index_to_variable, x_range_for_index, model=None, re
         axs[int(round((index+1)/4,0)),index%2].set_xlabel('{} initial values'.format(index_to_variable[index]))
         axs[int(round((index+1)/4,0)),index%2].legend()
 
-    fig.suptitle('varying over {}'.format(index_to_variable[index]))
+    fig.suptitle('action: {}'.format(initial_x[-1]))
     fig.tight_layout()
