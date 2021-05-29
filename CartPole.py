@@ -423,3 +423,128 @@ def plot_y_scans(initial_x, index_to_variable, x_range_for_index, model=None, re
 
     fig.suptitle('action: {}'.format(initial_x[-1]))
     fig.tight_layout()
+
+def kernel(X, X_dash, sigma):
+
+    if type(X) == list: X = np.array(X)
+    if type(X_dash) == list: X_dash = np.array([X_dash])
+    
+    try:
+        squared_numerator = np.array([(X[i]-X_dash[i])**2 if i != 2  else (np.sin((X[i]-X_dash[i])/2))**2 for i in range(5)])
+    except:
+        print(X, X_dash, '<------------ fix this')
+    return np.exp(-np.sum(np.divide(squared_numerator, 2*np.square(sigma))))
+
+def generate_K(X, M, sigma, kernel=kernel):
+    if type(M) != list: M = np.array(M)
+        
+    for i,x_location in enumerate(X):
+        K_row = np.array([kernel(x_location, RBF_x, sigma) for RBF_x in X[M]])
+        try:
+            KnM = np.vstack((KnM, K_row))
+        except:
+#             print('first row of K: {} <---------------------- this should only happen once'.format(K_row.shape))
+            KnM = K_row
+            
+    return KnM
+
+def train_alpha(x_train, y_train, no_RBC, sigma, n, train_proportion, kernel=kernel, lam=0.00001):
+    
+    M_vals = np.random.randint(0, high=n*train_proportion, size=no_RBC)
+    X_i_vals = x_train[M_vals]
+    KnM_ = generate_K(x_train, M_vals, sigma, kernel)
+    KMM_ = generate_K(X_i_vals, [i for i in range(M_vals.size)], sigma, kernel)
+    alpha = np.linalg.lstsq(np.matmul(KnM_.T, KnM_) + lam*KMM_, np.matmul(KnM_.T, y_train))[0]
+
+#     alpha = np.linalg.lstsq(np.matmul(KnM_.T, KnM_), np.matmul(KnM_.T, y_train))[0]
+#     alpha = np.matmul(np.linalg.pinv(KnM_), y_train).T
+#     print('alpha.shape: {}'.format(alpha.shape))
+    
+    return alpha, X_i_vals
+
+def predict(x_test, alpha, X_i_vals, sigma, kernel=kernel):
+    
+    KnM_test= [None, None]
+    for X_i in X_i_vals:
+        if x_test.size > 4:
+            assert x_test.size % 5 == 0, 'x_test.size: ' + str(x_test.size)
+            
+            if x_test.ndim == 1:
+                KnM_test_row = kernel(X_i, x_test, sigma=sigma)
+            else:
+                KnM_test_row = np.array([kernel(X_i, x_test_, sigma=sigma) for x_test_ in x_test])
+            
+        elif x_test.size == 4:
+            if x_test.ndim > 1: x_test = x_test[0]
+            KnM_test_row = kernel(X_i, x_test, sigma=sigma)
+        try:
+            KnM_test = np.vstack((KnM_test, KnM_test_row))
+        except:
+            KnM_test = KnM_test_row
+    predictions = np.matmul(KnM_test.T, alpha)
+    
+    return predictions
+
+def display_RMSE(predictions, y_test):
+    targets = y_test            
+    return [np.sqrt(np.mean((predictions[:,j]-targets[:,j])**2)) for j in range(4)] 
+
+def project_loss(initial_x, steps=1):
+    
+    cp = CartPole()
+    cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action = initial_x
+    loss_history = [loss(initial_x[:-1])]
+    y_history = np.array([initial_x])
+    
+    for step in range(steps):
+        cp.performAction(action)
+        cp.remap_angle()
+        y_ = np.array([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action])
+        loss_ = loss(y_[:-1])
+        loss_history.append(loss_)
+        y_history = np.vstack((y_history, y_))
+        
+    
+    return np.array(loss_history), y_history
+
+def plot_loss_contours(initial_x, initial_p, index_pair, range_p_pair, index_to_variable):
+
+    index_1, index_2 = index_pair
+    range_1, range_2 = range_p_pair
+    
+    loss_grid = np.zeros((len(range_1),len(range_2)))
+    
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    
+    for i,value_1 in enumerate(range_1):
+        for j, value_2 in enumerate(range_2):
+            x_ = initial_x.copy()
+            p_ = initial_p.copy()
+            p_[index_1] = value_1
+            p_[index_2] = value_2
+            x_[-1] = np.dot(x_[:-1],p_)
+            y_ = np.array(move_cart(x_, steps=1, display_plots=False, remap_angle=False))
+            loss_y = loss(y_)
+            loss_x = loss(initial_x.copy())
+#             print(loss_y,loss_x,y_,x_)
+            loss_grid[i,j] = loss_y - loss_x
+                
+    plt.contourf(range_1, range_2, loss_grid.T)
+    cs = ax.contourf(range_1, range_2, loss_grid.T)
+    fig.colorbar(cs, ax=ax)
+    plt.title('change in loss function')
+    plt.xlabel('$p_{}$ value'.format(index_1))
+    plt.ylabel('$p_{}$ value'.format(index_2)) 
+    print(np.max(loss_grid))
+
+
+def loss_after_action_step(x_row, p, index=2):
+    action_ = np.dot(p, x_row[:-1])
+    x_ = x_row.copy()
+    x_[-1] = action_
+    y_ = np.array(move_cart(x_, steps=1, display_plots=False, remap_angle=False))
+    return loss(y_[index])
+
+def training_loss(p, x_train):
+    return sum(np.apply_along_axis(loss_after_action_step, 1, x_train, p=p))
