@@ -166,9 +166,9 @@ class CartPole:
 
 
 
-def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle=False):
+def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle=False, noisy_dynamics=False, **kwargs):
     """
-    
+
     Parameters
     ----------
     initial_x : list-like
@@ -181,6 +181,12 @@ def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle
         
     remap_angle: bool
         whether to remap angle to between pi -pi
+    noisy_dynamics: bool
+        whether to introduce noise to the dynamics
+    noise_function: function
+        the function that applies noise to array
+    var: float
+        the variance for the noise function
         
     Returns
     -------
@@ -188,14 +194,22 @@ def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle
         x_history of state at discrete intervals
     """
     assert steps != 4, "Sorry, I don't like 4 steps"
+    if noisy_dynamics: 
+        try:
+            kwargs['noise_function'] 
+        except:
+            raise AttributeError('no noise_function given but you asked for noisy dynamics')
     
     cp = CartPole(visual=visual)
-    cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action = initial_x
+    x_ = initial_x.copy()
+    if noisy_dynamics: x_ = kwargs['noise_function'](x_, var=kwargs['var'])
+    cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action = x_
     
     for step in range(steps):
         if visual: cp.drawPlot()
         cp.performAction(action=action)
         if remap_angle: cp.remap_angle()
+        if noisy_dynamics: cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action = kwargs['noise_function']([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action], var=kwargs['var'])
         try: 
             x_history = np.vstack((x_history, np.array([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action])))
         except:
@@ -548,3 +562,34 @@ def loss_after_action_step(x_row, p, index=2):
 
 def training_loss(p, x_train):
     return sum(np.apply_along_axis(loss_after_action_step, 1, x_train, p=p))
+
+def add_noise(data_array, var=0.01):#, lam=0.05 , var=[10,20,2*np.pi,30,40]):
+    if type(data_array) == list: data_array = np.array(data_array)  
+#     if type(var) == list: var = np.array(var)  
+#     if var is None: var = (np.std(data_array, axis=0)*lam)**2
+    if data_array.shape == data_array.size: data_array = np.expand_dims(data_array,0) 
+    
+#     for i in range(var.size):
+#         noise = np.random.normal(0,var[i], (int(data_array.size/var.size)))
+#         print(noise, var[i])
+#         noisy_array_column = data_array[:,i] + noise
+#         try:
+#             noisy_array = np.vstack((noisy_array, noisy_array_column))
+#         except:
+#             print('----------------')
+#             noisy_array = noisy_array_column
+    noisy_array = np.random.normal(0,var,(data_array.shape)) + data_array
+    return noisy_array
+
+def plot_predictions_vs_actual(predictions, actual, index_to_variable):
+    fig,axs = plt.subplots(2,2,figsize=(12,9))
+    for j in range(4):
+        ul = max(max(predictions[:,j]), max(actual[:,j]))
+        ll = min(min(predictions[:,j]), min(actual[:,j]))
+        axs[int(round((j+1)/4,0)),j%2].scatter(predictions[:,j], actual[:,j])
+        axs[int(round((j+1)/4,0)),j%2].plot([ll,ul],[ll,ul], color='g')
+        axs[int(round((j+1)/4,0)),j%2].set_title(index_to_variable[j])
+        axs[int(round((j+1)/4,0)),j%2].set_xlabel('prediction')
+        axs[int(round((j+1)/4,0)),j%2].set_ylabel('actual')
+
+        fig.tight_layout()
