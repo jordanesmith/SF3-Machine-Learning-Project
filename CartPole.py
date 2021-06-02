@@ -5,6 +5,7 @@ fork from python-rl and pybrain for visualization
 import autograd.numpy as np
 from matplotlib.pyplot import ion, draw, Rectangle, Line2D
 import matplotlib.pyplot as plt
+import math
 
 # If theta  has gone past our conceptual limits of [-pi,pi]
 # map it onto the equivalent angle that is in the accepted range (by adding or subtracting 2pi)
@@ -205,9 +206,10 @@ def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle
     if noisy_dynamics: x_ = kwargs['noise_function'](x_, var=kwargs['var'])
     cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action = x_
     
-    for step in range(steps):
+
+    for _ in range(steps):
         if visual: cp.drawPlot()
-        cp.performAction(action=action)
+        cp.performAction(action)
         if remap_angle: cp.remap_angle()
         if noisy_dynamics: cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action = kwargs['noise_function']([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action], var=kwargs['var'])
         try: 
@@ -242,7 +244,7 @@ def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle
     if len(x_history) != 5: return x_history[-1]
     else: return x_history
 
-def generate_data(n, steps=1, remap_angle=False):
+def generate_data(n, steps=1, train_proportion=0.8, remap_angle=False):
     for i in range(n):
         try:
             x_ = np.array([np.random.normal(), np.random.uniform(-10, 10), np.random.uniform(-np.pi,np.pi), np.random.uniform(-15,15), np.random.uniform(-20,20)])
@@ -253,8 +255,10 @@ def generate_data(n, steps=1, remap_angle=False):
         except:
             x = np.array([np.random.normal(), np.random.uniform(-10, 10), np.random.uniform(-np.pi,np.pi), np.random.uniform(-15,15), np.random.uniform(-20,20)])
             y = np.array(move_cart(x, steps=steps, display_plots=False, remap_angle=remap_angle)) - x
-            
-    return x,y
+        
+    x_train, y_train, x_test, y_test = x[:int(n*train_proportion)], y[:int(n*train_proportion)], x[int(n*train_proportion):], y[int(n*train_proportion):]
+
+    return x_train, y_train, x_test, y_test
 
 def plot_y_contour_as_difference_in_x(initial_x, index_pair, range_x_pair, index_to_variable, dynamics='actual', model=None, **kwargs):
     '''
@@ -452,7 +456,7 @@ def kernel(X, X_dash, sigma):
 def generate_K(X, M, sigma, kernel=kernel):
     if type(M) != list: M = np.array(M)
         
-    for i,x_location in enumerate(X):
+    for x_location in X:
         K_row = np.array([kernel(x_location, RBF_x, sigma) for RBF_x in X[M]])
         try:
             KnM = np.vstack((KnM, K_row))
@@ -510,7 +514,7 @@ def project_loss(initial_x, steps=1):
     loss_history = [loss(initial_x[:-1])]
     y_history = np.array([initial_x])
     
-    for step in range(steps):
+    for _ in range(steps):
         cp.performAction(action)
         cp.remap_angle()
         y_ = np.array([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action])
@@ -521,7 +525,7 @@ def project_loss(initial_x, steps=1):
     
     return np.array(loss_history), y_history
 
-def plot_loss_contours(initial_x, initial_p, index_pair, range_p_pair, index_to_variable):
+def plot_loss_contours(initial_x, initial_p, index_pair, range_p_pair):
 
     index_1, index_2 = index_pair
     range_1, range_2 = range_p_pair
@@ -537,7 +541,7 @@ def plot_loss_contours(initial_x, initial_p, index_pair, range_p_pair, index_to_
             p_ = initial_p.copy()
             p_[index_1] = value_1
             p_[index_2] = value_2
-            x_[-1] = np.dot(x_[:-1],p_)
+            x_[-1] = 20 * np.tanh(np.dot(x_[:-1],p_))
             y_ = np.array(move_cart(x_, steps=1, display_plots=False, remap_angle=False))
             loss_y = loss(y_)
             loss_x = loss(initial_x.copy())
@@ -552,16 +556,37 @@ def plot_loss_contours(initial_x, initial_p, index_pair, range_p_pair, index_to_
     plt.ylabel('$p_{}$ value'.format(index_2)) 
     print(np.max(loss_grid))
 
+def policy_exponent(X, X_i, W):
+    if X.size == 5: X = X[:-1]
+    if X_i.size == 5: X_i = X_i[:-1]
+    diff_ = X - X_i
+    
+    try:
+        power_ = -0.5 * np.matmul(np.matmul(diff_.T, W), diff_)
+    except: # this solves issue of scipy.optimize.minimize needing 1D array
+        W = np.reshape(W, (-1, 4))
+        power_ = -0.5 * np.matmul(np.matmul(diff_.T, W), diff_)
+        # TODO assert W is symmetric
 
-def loss_after_action_step(x_row, p, index=2):
-    action_ = np.dot(p, x_row[:-1])
+    return np.exp(power_)
+
+def non_linear_policy(w_i, X, X_i_vals, W):
+    return 20 * np.tanh(np.sum(np.array([w_i[i] * policy_exponent(X, X_i_vals[i], W) for i in range(int(w_i.size/4))]))) #TODO vectorise this 
+
+def loss_after_action_step(x_row, kwargs_, linear=True, index=2):
+    if linear: action_ = 20 * np.tanh(np.dot(kwargs_['p'], x_row[:-1]))
+    else: action_ = non_linear_policy(kwargs_['w_i'], x_row, kwargs_['X_i_vals'], kwargs_['W']) 
     x_ = x_row.copy()
     x_[-1] = action_
-    y_ = np.array(move_cart(x_, steps=1, display_plots=False, remap_angle=False))
+    if kwargs_['model_predictive_control']:
+        y_ = kwargs_['rollout_prediction_model'](x_, kwargs_['rollout_prediction_model_attr']['alpha'], kwargs_['rollout_prediction_model_attr']['X_i_vals'], kwargs_['rollout_prediction_model_attr']['sigma']) # TODO change to model.predict
+    else:
+        y_ = np.array(move_cart(x_, steps=1, display_plots=False, remap_angle=False)) #TODO make this if statement for training on precidted data not move cart
     return loss(y_[index])
 
-def training_loss(p, x_train):
-    return sum(np.apply_along_axis(loss_after_action_step, 1, x_train, p=p))
+def training_loss(parameter_to_be_optimised, x_train, kwargs_):
+    kwargs_[kwargs_['parameter_to_be_optimised']] = parameter_to_be_optimised    
+    return sum(np.apply_along_axis(loss_after_action_step, 1, x_train, kwargs_=kwargs_, linear=kwargs_['linear']))
 
 def add_noise(data_array, var=0.01):#, lam=0.05 , var=[10,20,2*np.pi,30,40]):
     if type(data_array) == list: data_array = np.array(data_array)  
