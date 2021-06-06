@@ -5,7 +5,6 @@ fork from python-rl and pybrain for visualization
 import autograd.numpy as np
 from matplotlib.pyplot import ion, draw, Rectangle, Line2D
 import matplotlib.pyplot as plt
-import math
 
 # If theta  has gone past our conceptual limits of [-pi,pi]
 # map it onto the equivalent angle that is in the accepted range (by adding or subtracting 2pi)
@@ -23,12 +22,10 @@ def _remap_angle(theta):
 
 ## loss function given a state vector. the elements of the state vector are
 ## [cart location, cart velocity, pole angle, pole angular velocity]
-def _loss(state):
-    sig = 0.5
-    return 1-np.exp(-np.dot(state,state)/(2.0 * sig**2))
 
-def loss(state):
-    return _loss(state)
+
+def loss(state, alpha=[1,1,0.5,0.5]):
+    return _loss(state, alpha)
 
 class CartPole:
     """Cart Pole environment. This implementation allows multiple poles,
@@ -211,7 +208,9 @@ def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle
         if visual: cp.drawPlot()
         cp.performAction(action)
         if remap_angle: cp.remap_angle()
-        if noisy_dynamics: cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action = kwargs['noise_function']([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action], var=kwargs['var'])
+        if noisy_dynamics: 
+            cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action = kwargs['noise_function']([cp.cart_location, cp.cart_velocity, cp.pole_angle, 
+                                                                                                                    cp.pole_velocity, action], var=kwargs['var'])
         try: 
             x_history = np.vstack((x_history, np.array([cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action])))
         except:
@@ -232,7 +231,7 @@ def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle
         axs[1].set_xlabel('cart_location')
         axs[1].set_ylabel('cart_velocity')
         
-        axs[2].scatter([x[2] for x in x_history], [x[3] for x in x_history])
+        axs[2].plot([x[2] for x in x_history], [x[3] for x in x_history])
         axs[2].set_xlabel('pole_angle')
         axs[2].set_ylabel('pole_velocity')
         
@@ -481,7 +480,6 @@ def train_alpha(x_train, y_train, no_RBC, sigma, n, train_proportion, kernel=ker
     return alpha, X_i_vals
 
 def predict(x_test, alpha, X_i_vals, sigma, kernel=kernel):
-    
     KnM_test= [None, None]
     for X_i in X_i_vals:
         if x_test.size > 4:
@@ -508,7 +506,6 @@ def display_RMSE(predictions, y_test):
     return [np.sqrt(np.mean((predictions[:,j]-targets[:,j])**2)) for j in range(4)] 
 
 def project_loss(initial_x, steps=1):
-    
     cp = CartPole()
     cp.cart_location, cp.cart_velocity, cp.pole_angle, cp.pole_velocity, action = initial_x
     loss_history = [loss(initial_x[:-1])]
@@ -522,14 +519,11 @@ def project_loss(initial_x, steps=1):
         loss_history.append(loss_)
         y_history = np.vstack((y_history, y_))
         
-    
     return np.array(loss_history), y_history
 
 def plot_loss_contours(initial_x, initial_p, index_pair, range_p_pair):
-
     index_1, index_2 = index_pair
     range_1, range_2 = range_p_pair
-    
     loss_grid = np.zeros((len(range_1),len(range_2)))
     
     fig = plt.figure()
@@ -559,34 +553,69 @@ def plot_loss_contours(initial_x, initial_p, index_pair, range_p_pair):
 def policy_exponent(X, X_i, W):
     if X.size == 5: X = X[:-1]
     if X_i.size == 5: X_i = X_i[:-1]
-    diff_ = X - X_i
-    
+    diff_ = X - X_i    
     try:
         power_ = -0.5 * np.matmul(np.matmul(diff_.T, W), diff_)
+        # print(diff_,power_)
     except: # this solves issue of scipy.optimize.minimize needing 1D array
         W = np.reshape(W, (-1, 4))
         power_ = -0.5 * np.matmul(np.matmul(diff_.T, W), diff_)
         # TODO assert W is symmetric
-
+    # print('#####',np.matmul(diff_.T, W), diff_)
     return np.exp(power_)
 
 def non_linear_policy(w_i, X, X_i_vals, W):
+    # print('--',np.sum(np.array([w_i[i] * policy_exponent(X, X_i_vals[i], W) for i in range(int(w_i.size/4))])))
     return 20 * np.tanh(np.sum(np.array([w_i[i] * policy_exponent(X, X_i_vals[i], W) for i in range(int(w_i.size/4))]))) #TODO vectorise this 
 
-def loss_after_action_step(x_row, kwargs_, linear=True, index=2):
-    if linear: action_ = 20 * np.tanh(np.dot(kwargs_['p'], x_row[:-1]))
-    else: action_ = non_linear_policy(kwargs_['w_i'], x_row, kwargs_['X_i_vals'], kwargs_['W']) 
-    x_ = x_row.copy()
-    x_[-1] = action_
-    if kwargs_['model_predictive_control']:
-        y_ = kwargs_['rollout_prediction_model'](x_, kwargs_['rollout_prediction_model_attr']['alpha'], kwargs_['rollout_prediction_model_attr']['X_i_vals'], kwargs_['rollout_prediction_model_attr']['sigma']) # TODO change to model.predict
-    else:
-        y_ = np.array(move_cart(x_, steps=1, display_plots=False, remap_angle=False)) #TODO make this if statement for training on precidted data not move cart
-    return loss(y_[index])
+def _loss(state, sig_):
+    # alpha = [2,3,0.7,3]
+    # return 1 - np.exp((state/alpha)**2)**-1
+    # return sum([1 - 1/(np.exp((state[i]/sig_[i])**2)) for i in range(4)])
+   
+    if type(state) == list: state = np.array(state).flatten()
+    state = state[:4]
+    sig_ = np.array([0.75, 0.6, 0.25, 0.4])
+    # print(state)
+    return 1-np.exp(-np.dot(state/sig_,state/sig_)/(2.0))
 
-def training_loss(parameter_to_be_optimised, x_train, kwargs_):
+def loss_after_steps(x_row, kwargs_, steps=20):
+    cumulative_loss = 0
+    x_ = x_row.copy()
+    
+    for step in range(steps):
+        if kwargs_['linear']: action_ = 20 * np.tanh(np.dot(kwargs_['p'], x_[:-1]))
+        else: action_ = non_linear_policy(kwargs_['w_i'], x_[:-1], kwargs_['X_i_vals'], kwargs_['W']) 
+        x_[-1] = action_
+
+        if kwargs_['model_predictive_control']:
+            y_ = kwargs_['rollout_prediction_model'](x_, kwargs_['rollout_prediction_model_attr']['alpha'], 
+                                                        kwargs_['rollout_prediction_model_attr']['X_i_vals'], 
+                                                        kwargs_['rollout_prediction_model_attr']['sigma']) 
+            y_ = np.array(y_)
+            #change to model.predict
+        else:
+            y_ = np.array(move_cart(x_, steps=1, display_plots=False, remap_angle=True)) #TODO make this if statement for training on precidted data not move cart
+        
+        # if kwargs_['parameter_to_be_optimised'] == 'alpha':
+        cumulative_loss += loss(y_.flatten(), kwargs_['sig_']) 
+        x_ = y_.copy()
+        # else:
+            # return loss(y_.flatten())
+    return cumulative_loss
+
+
+def training_loss(parameter_to_be_optimised, x_train, kwargs_):    
     kwargs_[kwargs_['parameter_to_be_optimised']] = parameter_to_be_optimised    
-    return sum(np.apply_along_axis(loss_after_action_step, 1, x_train, kwargs_=kwargs_, linear=kwargs_['linear']))
+    # print(parameter_to_be_optimised[0])
+    # return sum(np.apply_along_axis(loss_after_action_step, 1, x_train, kwargs_))
+    try:
+        return loss_after_steps(x_train, kwargs_)
+    except:
+        return sum(np.apply_along_axis(loss_after_steps, 1, x_train, kwargs_))
+
+
+
 
 def add_noise(data_array, var=0.01):#, lam=0.05 , var=[10,20,2*np.pi,30,40]):
     if type(data_array) == list: data_array = np.array(data_array)  
