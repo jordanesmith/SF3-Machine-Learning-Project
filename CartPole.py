@@ -54,7 +54,7 @@ class CartPole:
         self.mu_c = 0.001 #   # friction coefficient of the cart
         self.mu_p = 0.001 # # friction coefficient of the pole
         self.sim_steps = 50         # number of Euler integration steps to perform in one go
-        self.delta_time = 0.2        # time step of the Euler integrator
+        self.delta_time = 0.15       # time step of the Euler integrator
         self.max_force = 20.
         self.gravity = 9.8
         self.cart_mass = 0.5
@@ -164,7 +164,7 @@ class CartPole:
 
 
 
-def move_cart(initial_x, steps=10, visual=False, display_plots=True, remap_angle=False, noisy_dynamics=False, **kwargs):
+def move_cart(initial_x, steps=1, visual=False, display_plots=True, remap_angle=False, noisy_dynamics=False, **kwargs):
     """
 
     Parameters
@@ -555,18 +555,18 @@ def policy_exponent(X, X_i, W):
     if X_i.size == 5: X_i = X_i[:-1]
     diff_ = X - X_i    
     try:
-        power_ = -0.5 * np.matmul(np.matmul(diff_.T, W), diff_)
+        power_ = -0.5 * np.matmul(np.matmul(diff_, W), diff_.T)
         # print(diff_,power_)
     except: # this solves issue of scipy.optimize.minimize needing 1D array
         W = np.reshape(W, (-1, 4))
-        power_ = -0.5 * np.matmul(np.matmul(diff_.T, W), diff_)
+        power_ = -0.5 * np.matmul(np.matmul(diff_, W), diff_.T)
         # TODO assert W is symmetric
     # print('#####',np.matmul(diff_.T, W), diff_)
     return np.exp(power_)
 
 def non_linear_policy(w_i, X, X_i_vals, W):
     # print('--',np.sum(np.array([w_i[i] * policy_exponent(X, X_i_vals[i], W) for i in range(int(w_i.size/4))])))
-    return 20 * np.tanh(np.sum(np.array([w_i[i] * policy_exponent(X, X_i_vals[i], W) for i in range(int(w_i.size/4))]))) #TODO vectorise this 
+    return np.sum(np.array([w_i[i] * policy_exponent(X, X_i_vals[i], W) for i in range(int(w_i.size))])) #TODO vectorise this 
 
 def _loss(state, sig_):
     # alpha = [2,3,0.7,3]
@@ -575,17 +575,32 @@ def _loss(state, sig_):
    
     if type(state) == list: state = np.array(state).flatten()
     state = state[:4]
-    sig_ = np.array([0.75, 0.6, 0.25, 0.4])
     # print(state)
-    return 1-np.exp(-np.dot(state/sig_,state/sig_)/(2.0))
+    return np.dot(state,state)
+    # return 1-np.exp(-np.dot(state/sig_,state/sig_)/(2.0))
 
 def loss_after_steps(x_row, kwargs_, steps=20):
     cumulative_loss = 0
     x_ = x_row.copy()
+    x_[2] = remap_angle(x_[2])
+    if kwargs_['linear']:
+        sig_list = kwargs_['sig']*steps
+    else:
+        sig_list = np.linspace(kwargs_['sig_start'], kwargs_['sig_end'], steps)
     
-    for step in range(steps):
-        if kwargs_['linear']: action_ = 20 * np.tanh(np.dot(kwargs_['p'], x_[:-1]))
-        else: action_ = non_linear_policy(kwargs_['w_i'], x_[:-1], kwargs_['X_i_vals'], kwargs_['W']) 
+    for sig_ in sig_list: #for step in range(steps)
+        if kwargs_['linear']: action_ = 20 * np.tanh(np.dot(kwargs_['p'], np.array(x_).flatten()[:-1])/20)
+        
+        else: 
+            if kwargs_['parameter_to_be_optimised'] == 'entire_array':
+                w_i = kwargs_[kwargs_['parameter_to_be_optimised']][:-16]
+                flat_W = kwargs_[kwargs_['parameter_to_be_optimised']][-16:]
+                W_ = flat_W.reshape(4,4)
+                W = np.matmul(W_.T,W_)
+                kwargs_['w_i'] = w_i
+                kwargs_['W'] = W
+            action_ = non_linear_policy(kwargs_['w_i'], x_[:-1], kwargs_['X_i_vals'], kwargs_['W']) 
+            print(action_)
         x_[-1] = action_
 
         if kwargs_['model_predictive_control']:
@@ -595,18 +610,24 @@ def loss_after_steps(x_row, kwargs_, steps=20):
             y_ = np.array(y_)
             #change to model.predict
         else:
-            y_ = np.array(move_cart(x_, steps=1, display_plots=False, remap_angle=True)) #TODO make this if statement for training on precidted data not move cart
+            y_ = np.array(move_cart(x_, steps=1, display_plots=False, remap_angle=True)) 
         
         # if kwargs_['parameter_to_be_optimised'] == 'alpha':
-        cumulative_loss += loss(y_.flatten(), kwargs_['sig_']) 
+        cumulative_loss += loss(y_.flatten(), sig_) 
         x_ = y_.copy()
         # else:
             # return loss(y_.flatten())
+    if not kwargs_['linear']:
+        fi = open("loss_.txt", "a")
+        fi.write(str(cumulative_loss)+',')
+        fi.close()
+
     return cumulative_loss
 
 
-def training_loss(parameter_to_be_optimised, x_train, kwargs_):    
-    kwargs_[kwargs_['parameter_to_be_optimised']] = parameter_to_be_optimised    
+def training_loss(array_for_optimisation, x_train, kwargs_):   
+    # array_for_optimisation is [w_i vector, flattened W matrix]
+    kwargs_[kwargs_['parameter_to_be_optimised']] = array_for_optimisation    
     # print(parameter_to_be_optimised[0])
     # return sum(np.apply_along_axis(loss_after_action_step, 1, x_train, kwargs_))
     try:
