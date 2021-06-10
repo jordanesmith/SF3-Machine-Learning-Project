@@ -54,7 +54,7 @@ class CartPole:
         self.mu_c = 0.001 #   # friction coefficient of the cart
         self.mu_p = 0.001 # # friction coefficient of the pole
         self.sim_steps = 50         # number of Euler integration steps to perform in one go
-        self.delta_time = 0.15       # time step of the Euler integrator
+        self.delta_time = 0.05       # time step of the Euler integrator
         self.max_force = 20.
         self.gravity = 9.8
         self.cart_mass = 0.5
@@ -569,19 +569,22 @@ def non_linear_policy(w_i, X, X_i_vals, W):
     return np.sum(np.array([w_i[i] * policy_exponent(X, X_i_vals[i], W) for i in range(int(w_i.size))])) #TODO vectorise this 
 
 def _loss(state, sig_):
-    # alpha = [2,3,0.7,3]
-    # return 1 - np.exp((state/alpha)**2)**-1
-    # return sum([1 - 1/(np.exp((state[i]/sig_[i])**2)) for i in range(4)])
+    # alpha = np.array([5,2,0.7,3])
+    # return sum(1 - 1/(np.exp(np.abs(np.array(state)/alpha))))
+
+    # return sum([1 - 1/(np.exp((state[i]/alpha[i])**2)) for i in range(4)])
    
     if type(state) == list: state = np.array(state).flatten()
     state = state[:4]
     # print(state)
-    return np.dot(state,state)
-    # return 1-np.exp(-np.dot(state/sig_,state/sig_)/(2.0))
+    loss_ = 1-np.exp(-np.dot(state/sig_,state/sig_)/(2.0))
+    # print(np.round(loss_,5))
+    return loss_
 
-def loss_after_steps(x_row, kwargs_, steps=20):
+def loss_after_steps(x_row, kwargs_, steps=30):
     cumulative_loss = 0
-    x_ = x_row.copy()
+    if type(x_row) == list: x_row = np.array(x_row)
+    x_ = x_row.copy().flatten()
     x_[2] = remap_angle(x_[2])
     if kwargs_['linear']:
         sig_list = kwargs_['sig']*steps
@@ -593,14 +596,16 @@ def loss_after_steps(x_row, kwargs_, steps=20):
         
         else: 
             if kwargs_['parameter_to_be_optimised'] == 'entire_array':
-                w_i = kwargs_[kwargs_['parameter_to_be_optimised']][:-16]
-                flat_W = kwargs_[kwargs_['parameter_to_be_optimised']][-16:]
+                ris = -kwargs_['no_RBC']*4 #radial_index_start
+                w_i = kwargs_[kwargs_['parameter_to_be_optimised']][:ris-16]
+                flat_W = kwargs_[kwargs_['parameter_to_be_optimised']][ris-16:ris]
+                X_i_vals = kwargs_[kwargs_['parameter_to_be_optimised']][ris:]
                 W_ = flat_W.reshape(4,4)
                 W = np.matmul(W_.T,W_)
                 kwargs_['w_i'] = w_i
                 kwargs_['W'] = W
+                kwargs_['X_i_vals'] = X_i_vals
             action_ = non_linear_policy(kwargs_['w_i'], x_[:-1], kwargs_['X_i_vals'], kwargs_['W']) 
-            print(action_)
         x_[-1] = action_
 
         if kwargs_['model_predictive_control']:
@@ -617,25 +622,29 @@ def loss_after_steps(x_row, kwargs_, steps=20):
         x_ = y_.copy()
         # else:
             # return loss(y_.flatten())
-    if not kwargs_['linear']:
-        fi = open("loss_.txt", "a")
-        fi.write(str(cumulative_loss)+',')
-        fi.close()
+    # if not kwargs_['linear']:
+    #     fi = open("loss_.txt", "a")
+    #     fi.write(str(cumulative_loss)+',')
+    #     fi.close()
 
+    print('cumulative_loss: \t', np.round(cumulative_loss,4))
     return cumulative_loss
 
 
 def training_loss(array_for_optimisation, x_train, kwargs_):   
     # array_for_optimisation is [w_i vector, flattened W matrix]
     kwargs_[kwargs_['parameter_to_be_optimised']] = array_for_optimisation    
+    print(array_for_optimisation)
     # print(parameter_to_be_optimised[0])
     # return sum(np.apply_along_axis(loss_after_action_step, 1, x_train, kwargs_))
-    try:
-        return loss_after_steps(x_train, kwargs_)
-    except:
-        return sum(np.apply_along_axis(loss_after_steps, 1, x_train, kwargs_))
-
-
+    # try:
+    loss_ = loss_after_steps(x_train, kwargs_)
+    print(loss_)
+    return loss_
+    # except:
+    #     loss_ = sum(np.apply_along_axis(loss_after_steps, 1, x_train, kwargs_))
+    #     print(loss_, array_for_optimisation)
+    #     return loss_
 
 
 def add_noise(data_array, var=0.01):#, lam=0.05 , var=[10,20,2*np.pi,30,40]):
